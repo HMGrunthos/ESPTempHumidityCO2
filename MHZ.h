@@ -46,6 +46,7 @@ class MHZ {
   boolean debug = false;
 
   Stream * _serial;
+  int sendCommand(byte *cmdPacket, size_t packetSize, byte *response);
   byte getCheckSum(byte *packet);
 };
 
