@@ -107,14 +107,78 @@ int MHZ::calibrate() {
     if (debug) Serial.println(F("-- serial is not configured"));
     return STATUS_SERIAL_NOT_CONFIGURED;
   }
-  if (isPreHeating()) return STATUS_NOT_READY;
+  if (!isReady()) return STATUS_NOT_READY;
   if (debug) Serial.println(F("-- Calibrating CO2 sensor ---"));
   byte cmd[9] = {0xFF, 0x01, 0x87, 0x00, 0x00, 0x00, 0x00, 0x00, 0x78};
+  byte response[9];  // for answer
 
   if (debug) Serial.print(F("  >> Sending CO2 calibration request"));
   _serial->write(cmd, sizeof(cmd));  // request calibration
+  lastRequest = millis();
 
-  delay(100);  // wait a short moment to avoid false reading
+  // clear the buffer
+  memset(response, 0, 9);
+
+  int waited = 0;
+  while (_serial->available() == 0) {
+    if (debug) Serial.print(".");
+    delay(100);  // wait a short moment to avoid false reading
+    if (waited++ > 10) {
+      if (debug) Serial.println(F("No response after 10 seconds"));
+      _serial->flush();
+      return STATUS_NO_RESPONSE;
+    }
+  }
+  if (debug) Serial.println();
+
+  // The serial stream can get out of sync. The response starts with 0xff, try
+  // to resync.
+  // TODO: I think this might be wrong any only happens during initialization?
+  boolean skip = false;
+  while (_serial->available() > 0 && (unsigned char)_serial->peek() != 0xFF) {
+    if (!skip) {
+      Serial.print(F("MHZ: - skipping unexpected readings:"));
+      skip = true;
+    }
+    Serial.print(" ");
+    Serial.print(_serial->peek(), HEX);
+    _serial->read();
+  }
+  if (skip) Serial.println();
+
+  if (_serial->available() > 0) {
+    int count = _serial->readBytes(response, 9);
+    if (count < 9) {
+      _serial->flush();
+      return STATUS_INCOMPLETE;
+    }
+  } else {
+    _serial->flush();
+    return STATUS_INCOMPLETE;
+  }
+
+  if (debug) {
+    // print out the response in hexa
+    Serial.print(F("  << "));
+    for (int i = 0; i < 9; i++) {
+      Serial.print(response[i], HEX);
+      Serial.print(F("  "));
+    }
+    Serial.println(F(""));
+  }
+
+  // checksum
+  byte check = getCheckSum(response);
+  if (response[8] != check) {
+    Serial.println(F("MHZ: Checksum not OK!"));
+    Serial.print(F("MHZ: Received: "));
+    Serial.println(response[8], HEX);
+    Serial.print(F("MHZ: Should be: "));
+    Serial.println(check, HEX);
+    temperature = STATUS_CHECKSUM_MISMATCH;
+    _serial->flush();
+    return STATUS_CHECKSUM_MISMATCH;
+  }
 
   return 0;
 }
