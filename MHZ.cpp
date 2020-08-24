@@ -220,7 +220,7 @@ int MHZ::sendCommand(byte *cmdPacket, size_t packetSize, byte *response) {
     Serial.println(F(""));
   }
 
-  // checksum
+  // Checksum
   byte check = getCheckSum(response);
   if (response[8] != check) {
     Serial.println(F("MHZ: Checksum not OK!"));

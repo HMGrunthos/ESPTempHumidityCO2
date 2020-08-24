@@ -4,16 +4,14 @@
 *********/
 
 // Import required libraries
+#include <WiFiUdp.h>
+#include <NTPClient.h>
 #include <ESPAsyncWebServer.h>
 #include <DHTesp.h>
 
 #include "MHZ.h"
+#include "ManageWiFi.h"
 #include "indexHTML.h"
-
-#ifdef ESP32
-  #pragma message(THIS EXAMPLE IS FOR ESP8266 ONLY!)
-  #error Select ESP8266 board.
-#endif
 
 // Pin for uart reading
 #define MH_Z14_RX D7
@@ -32,10 +30,6 @@ static volatile bool mhzDoCalibrate = false;
 // DHT Interface object
 DHTesp dht;
 
-// Replace with your network credentials
-const char *ssid = "Sleeper cell - 2.4GHz";
-const char *password = "ccec37ffd6";
-
 // Current temperature, humidity and CO2 readings
 struct {
   struct {
@@ -51,8 +45,12 @@ struct {
   } mhz;
 } currentReadings;
 
-// Create AsyncWebServer object on port 80
-AsyncWebServer server(80);
+// Create NTP objects
+WiFiUDP ntpUDP;
+NTPClient timeClient = NTPClient(ntpUDP);
+
+// AsyncWebServer object
+static AsyncWebServer *server = NULL;
 
 void setup()
 {
@@ -64,49 +62,23 @@ void setup()
 
   // Serial port for debugging purposes
   Serial.begin(115200);
+  do {
+    delay(200);
+  } while(!Serial);
+
+  // Configure the sensor interfaces
   dht.setup(DHTPIN, DHTesp::DHT22); // Connect DHT sensor to GPIO 17
-
-  delay(100);
-
   co2.setDebug(true);
 
-  // Connect to Wi-Fi
-  WiFi.hostname("EnvMonOne");
-  WiFi.begin(ssid, password);
-  while (WiFi.status() != WL_CONNECTED) {
-    delay(1000);
-    Serial.println(".");
-  }
+  // Try and connect to WiFi
+  TryConnect("EnvMonConfigAP");
 
   // Print ESP8266 Local IP Address
   Serial.println(WiFi.localIP());
 
-  // Route for root / web page
-  server.on("/", HTTP_GET, [](AsyncWebServerRequest *request){
-    request->send_P(200, "text/html", index_html);
-  });
-  server.on("/tempDHT", HTTP_GET, [](AsyncWebServerRequest *request){
-    request->send_P(200, "text/plain", requestHandler("TEMPDHT").c_str());
-  });
-  server.on("/tempMHZ", HTTP_GET, [](AsyncWebServerRequest *request){
-    request->send_P(200, "text/plain", requestHandler("TEMPMHZ").c_str());
-  });
-  server.on("/humidity", HTTP_GET, [](AsyncWebServerRequest *request){
-    request->send_P(200, "text/plain", requestHandler("HUMIDITY").c_str());
-  });
-  server.on("/co2", HTTP_GET, [](AsyncWebServerRequest *request){
-    request->send_P(200, "text/plain", requestHandler("CO2").c_str());
-  });
-  server.on("/uptime", HTTP_GET, [](AsyncWebServerRequest *request){
-    request->send_P(200, "text/plain", requestHandler("UPTIME").c_str());
-  });
-  server.on("/calibrateCO2", HTTP_GET, [](AsyncWebServerRequest *request){
-    mhzDoCalibrate = true;
-    request->send_P(200, "text/plain", "OK");
-  });
-
-  // Start server
-  server.begin();
+  // Start the network services
+  timeClient.begin();
+  startServer();
 }
 
 void loop()
@@ -168,6 +140,63 @@ void loop()
         }
       }
     }
+
+    // Keep an eye on the WiFi connection and reconnect or reboot as necessary
+    if(CheckWiFi()) {
+      // If the WiFi is up then do an NTP update
+      timeClient.update();
+    }
+
+    if(timeClient.getEpochTime() > 1500000000) {
+      Serial.println(timeClient.getFormattedTime());
+    }
+  }
+}
+
+void startServer()
+{
+  // Serial.println("Starting web server.");
+  if(!server) {
+    server = new AsyncWebServer(80);
+
+    // Route for root / web page
+    server->on("/", HTTP_GET, [](AsyncWebServerRequest *request){
+      request->send_P(200, "text/html", index_html);
+    });
+    server->on("/tempDHT", HTTP_GET, [](AsyncWebServerRequest *request){
+      request->send_P(200, "text/plain", requestHandler("TEMPDHT").c_str());
+    });
+    server->on("/tempMHZ", HTTP_GET, [](AsyncWebServerRequest *request){
+      request->send_P(200, "text/plain", requestHandler("TEMPMHZ").c_str());
+    });
+    server->on("/humidity", HTTP_GET, [](AsyncWebServerRequest *request){
+      request->send_P(200, "text/plain", requestHandler("HUMIDITY").c_str());
+    });
+    server->on("/co2", HTTP_GET, [](AsyncWebServerRequest *request){
+      request->send_P(200, "text/plain", requestHandler("CO2").c_str());
+    });
+    server->on("/uptime", HTTP_GET, [](AsyncWebServerRequest *request){
+      request->send_P(200, "text/plain", requestHandler("UPTIME").c_str());
+    });
+    server->on("/calibrateCO2", HTTP_GET, [](AsyncWebServerRequest *request){
+      mhzDoCalibrate = true;
+      request->send_P(200, "text/plain", "OK");
+    });
+
+    server->begin();
+    // Serial.println("Web server started.");
+  }
+}
+
+void stopServer()
+{
+  // Serial.println("Stopping web server.");
+  if(server) {
+    server->end();
+    delay(100);
+    delete server;
+    server = NULL;
+    // Serial.println("Web server stopped.");
   }
 }
 

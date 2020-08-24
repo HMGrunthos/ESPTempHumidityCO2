@@ -39,8 +39,10 @@ const char index_html[] PROGMEM = R"rawliteral(
   </style>
 </head>
 <body onload="updateAll()">
-  <span id="Uptime" title="Awaiting update"/>
-  <h2>Environmental monitor</h2>
+  <font id="PageTitleFont" color="black">
+    <span id="Uptime" title="Awaiting update"/>
+    <h2 id="PageTitleText">Environmental monitor</h2>
+  </font>
   <span id="CO2Age" title="Awaiting update"/>
   <div class="center">
     <p>
@@ -82,6 +84,7 @@ const char index_html[] PROGMEM = R"rawliteral(
   </div>
 </body>
 <script>
+sessionStorage.setItem("connectionBroken", "false");
 function updateFields(request, field, mouseText, mouseOverComment) {
   var xhttp = new XMLHttpRequest();
   xhttp.onreadystatechange = function() {
@@ -97,8 +100,20 @@ function updateFields(request, field, mouseText, mouseOverComment) {
         mouseOverText = (res[1]/1000).toFixed(0) + mouseOverComment;
       }
       document.getElementById(mouseText).setAttribute("title", mouseOverText);
+      if(sessionStorage.getItem("connectionBroken") == "true") {
+        sessionStorage.setItem("connectionBroken", "false");
+        document.getElementById("PageTitleFont").setAttribute("color", "black");
+        document.getElementById("PageTitleText").innerHTML = "Environmental monitor";
+      }
     }
   };
+  xhttp.onerror = function() {
+    if(sessionStorage.getItem("connectionBroken") == "false") {
+      sessionStorage.setItem("connectionBroken", "true");
+      document.getElementById("PageTitleFont").setAttribute("color", "red");
+      document.getElementById("PageTitleText").innerHTML = "Environmental monitor<br/>(Not connected)";
+    }
+  }
   xhttp.open("GET", request, true);
   xhttp.send();
 }
