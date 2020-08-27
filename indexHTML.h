@@ -27,8 +27,16 @@ const char index_html[] PROGMEM = R"rawliteral(
       left: 50%;
       transform: translate(-50%, -50%);
     }
+    .label {
+      font-size: 1.5rem;
+      color: black;
+    }
+    .value {
+      font-weight: bold;
+    }
     .units {
       font-size: 0.9rem;
+      color: black;
     }
     #footer {
      position:absolute;
@@ -47,8 +55,8 @@ const char index_html[] PROGMEM = R"rawliteral(
   <div class="center">
     <p>
       <i class="fas fa-wind" style="color:#05ee8a;"></i>
-      <span style="font-size: 1.5rem;">Carbon dioxide</span>
-      <span id="co2" style="font-weight: bold;">nan</span>
+      <span class="label">Carbon dioxide</span>
+      <span id="co2" class="value" style="color:red">nan</span>
       <sup class="units">ppm</sup>
     </p>
   </div>
@@ -56,8 +64,8 @@ const char index_html[] PROGMEM = R"rawliteral(
   <div class="center">
     <p>
       <i class="fas fa-tint" style="color:#00add6;"></i>
-      <span style="font-size: 1.5rem;">Humidity</span>
-      <span id="humidity" style="font-weight: bold;">nan</span>
+      <span class="label">Humidity</span>
+      <span id="humidity" class="value" style="color:red">nan</span>
       <sup class="units">&percnt;</sup>
     </p>
   </div>
@@ -65,8 +73,8 @@ const char index_html[] PROGMEM = R"rawliteral(
   <div class="center">
     <p>
       <i class="fas fa-thermometer-half" style="color:#059e8a"></i>
-      <span style="font-size: 1.5rem;">Temperature<sub class="units">MHZ<sub/></span>
-      <span id="tempMHZ" style="font-weight: bold;">nan</span>
+      <span class="label">Temperature<sub class="units">MHZ<sub/></span>
+      <span id="tempMHZ" class="value" style="color:red">nan</span>
       <sup class="units">&deg;C</sup>
     </p>
   </div>
@@ -74,8 +82,8 @@ const char index_html[] PROGMEM = R"rawliteral(
   <div class="center">
     <p>
       <i class="fas fa-thermometer-half" style="color:#059e8a"></i>
-      <span style="font-size: 1.5rem;">Temperature<sub class="units">DHT<sub/></span>
-      <span id="tempDHT" style="font-weight: bold;">nan</span>
+      <span class="label">Temperature<sub class="units">DHT<sub/></span>
+      <span id="tempDHT" class="value" style="color:red">nan</span>
       <sup class="units">&deg;C</sup>
     </p>
   </div>
@@ -90,16 +98,20 @@ function updateFields(request, field, mouseText, mouseOverComment) {
   xhttp.onreadystatechange = function() {
     if (this.readyState == 4 && this.status == 200) {
       var res = this.responseText.split(",");
-      if(field != "") {
-        document.getElementById(field).innerHTML = res[0];
-      }
       var mouseOverText;
+      var textColour;
       if(res[1] == 0) {
         mouseOverText = "Never updated";
+        textColour = "color:red";
       } else {
         mouseOverText = (res[1]/1000).toFixed(0) + mouseOverComment;
+        textColour = "color:black";
       }
       document.getElementById(mouseText).setAttribute("title", mouseOverText);
+      if(field != "") {
+        document.getElementById(field).innerHTML = res[0];
+        document.getElementById(field).setAttribute("style", textColour);
+      }
       if(sessionStorage.getItem("connectionBroken") == "true") {
         sessionStorage.setItem("connectionBroken", "false");
         document.getElementById("PageTitleFont").setAttribute("color", "black");

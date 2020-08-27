@@ -4,9 +4,8 @@
 *********/
 
 // Import required libraries
-#include <WiFiUdp.h>
-#include <NTPClient.h>
 #include <ESPAsyncWebServer.h>
+#include <SPIFFSLogger.h>
 #include <DHTesp.h>
 
 #include "MHZ.h"
@@ -30,35 +29,56 @@ static volatile bool mhzDoCalibrate = false;
 // DHT Interface object
 DHTesp dht;
 
-// Current temperature, humidity and CO2 readings
+#define CLEARED 0
+#define DHTTEMP (1<<0)
+#define DHTRH (1<<1)
+#define MHZTEMP (1<<2)
+#define MHZCO2 (1<<3)
+#define ALLUPDATED (DHTTEMP | DHTRH | MHZTEMP | MHZCO2)
+
+// Current temperature, humidity and CO2 readings for house keeping
 struct {
   struct {
     struct {
-      float reading;
+      float *reading;
       unsigned long int lastUpdate;
     } temp, rh;
   } dht;
   struct {
-    float temp;
-    float co2;
+    int8_t *temp;
+    uint16_t *co2;
     unsigned long int lastUpdate;
   } mhz;
+  uint_fast8_t updateState;
 } currentReadings;
 
-// Create NTP objects
-WiFiUDP ntpUDP;
-NTPClient timeClient = NTPClient(ntpUDP);
+// Logger data
+struct EnvData {
+  struct {
+    float temp;
+    float humidity;
+  } dht;
+  struct {
+    int8_t temp;
+    uint16_t co2;
+  } mhz;
+} dataToLog;
+SPIFFSLogger<struct EnvData> logger("/log", 70);
+static bool loggerInitialised = false;
 
 // AsyncWebServer object
 static AsyncWebServer *server = NULL;
 
 void setup()
 {
+  memset(&dataToLog, 0, sizeof(dataToLog));
+  dataToLog.dht.temp = NAN;
+  dataToLog.dht.humidity = NAN;
   memset(&currentReadings, 0, sizeof(currentReadings));
-  currentReadings.dht.temp.reading = NAN;
-  currentReadings.dht.rh.reading = NAN;
-  currentReadings.mhz.temp = NAN;
-  currentReadings.mhz.co2 = NAN;
+  currentReadings.dht.temp.reading = &dataToLog.dht.temp;
+  currentReadings.dht.rh.reading = &dataToLog.dht.humidity;
+  currentReadings.mhz.temp = &dataToLog.mhz.temp;
+  currentReadings.mhz.co2 = &dataToLog.mhz.co2;
 
   // Serial port for debugging purposes
   Serial.begin(115200);
@@ -76,8 +96,11 @@ void setup()
   // Print ESP8266 Local IP Address
   Serial.println(WiFi.localIP());
 
-  // Start the network services
-  timeClient.begin();
+  // Configure time service
+  configTime(0, 0, "pool.ntp.org");
+  InitTimeZone();
+
+  // Start the services
   startServer();
 }
 
@@ -89,6 +112,8 @@ void loop()
 
   // Updates readings every 10 seconds
   const int long INTERVAL = 10000;
+
+  static uint8_t mostAvailMeas = 0;
 
   unsigned long currentMillis = millis();
   if (currentMillis - previousMillis >= INTERVAL) {
@@ -102,9 +127,10 @@ void loop()
       Serial.println("Failed to read from DHT sensor (Temperature).");
     }
     else {
-      currentReadings.dht.temp.reading = newDHTTemp;
+      *currentReadings.dht.temp.reading = newDHTTemp;
       currentReadings.dht.temp.lastUpdate = currentMillis;
-      Serial.println(currentReadings.dht.temp.reading);
+      currentReadings.updateState |= DHTTEMP;
+      Serial.println(*currentReadings.dht.temp.reading);
     }
 
     // Read Humidity
@@ -113,9 +139,10 @@ void loop()
     if (isnan(newDHTRH)) {
       Serial.println("Failed to read from DHT sensor (Humidity).");
     } else {
-      currentReadings.dht.rh.reading = newDHTRH;
+      *currentReadings.dht.rh.reading = newDHTRH;
       currentReadings.dht.rh.lastUpdate = currentMillis;
-      Serial.println(currentReadings.dht.rh.reading);
+      currentReadings.updateState |= DHTRH;
+      Serial.println(*currentReadings.dht.rh.reading);
     }
 
     // Update or calibrate co2 sensor
@@ -130,26 +157,50 @@ void loop()
         int newMHZCO2 = co2.readCO2UART();
         // if CO2 read failed, don't change h value 
         if (newMHZCO2 > 0) {
-          currentReadings.mhz.co2 = (float)newMHZCO2;
-          currentReadings.mhz.temp = (float)co2.getLastTemperature();
+          *currentReadings.mhz.co2 = (uint16_t)newMHZCO2;
+          *currentReadings.mhz.temp = (int8_t)co2.getLastTemperature();
           currentReadings.mhz.lastUpdate = currentMillis;
-          Serial.println(currentReadings.mhz.co2);
-          Serial.println(currentReadings.mhz.temp);
+          currentReadings.updateState |= MHZTEMP;
+          currentReadings.updateState |= MHZCO2;
+          Serial.println(*currentReadings.mhz.co2);
+          Serial.println(*currentReadings.mhz.temp);
         } else {
           Serial.println("Failed to read from MH-Z14A sensor!");
         }
       }
     }
 
-    // Keep an eye on the WiFi connection and reconnect or reboot as necessary
-    if(CheckWiFi()) {
-      // If the WiFi is up then do an NTP update
-      timeClient.update();
+    mostAvailMeas |= currentReadings.updateState;
+    if(mostAvailMeas != 0 && (currentReadings.updateState == mostAvailMeas)) {
+      if(loggerInitialised == true) {
+        logger.write(dataToLog);
+        time_t tNow;
+        struct tm *utcNow;
+        time(&tNow);
+        utcNow = gmtime (&tNow);
+        Serial.print("Logged values on: ");
+        Serial.print(asctime(utcNow));
+      } else {
+        Serial.println("Didn't log (uninitialised).");
+      }
+      currentReadings.updateState = CLEARED;
     }
 
-    if(timeClient.getEpochTime() > 1500000000) {
-      Serial.println(timeClient.getFormattedTime());
+    // Keep an eye on the WiFi connection and reconnect or reboot as necessary
+    if(CheckWiFi()) {
+      // In here if the wifi is up
     }
+  }
+
+  // Initialise and update the logger if the time service has been initialised
+  if(loggerInitialised == false) {
+    if(time(NULL) > 1500000000) {
+      logger.init();
+      loggerInitialised = true;
+    }
+  } else {
+    // Update and rotate logs
+    logger.process();
   }
 }
 
@@ -207,24 +258,33 @@ String requestHandler(const String &var)
   unsigned long int lastUpdate;
 
   if(var == "TEMPDHT") {
-    measurement = String(currentReadings.dht.temp.reading, 1);
+    measurement = String(*currentReadings.dht.temp.reading, 1);
     lastUpdate = currentReadings.dht.temp.lastUpdate;
   } else if(var == "TEMPMHZ") {
-    measurement = String(currentReadings.mhz.temp, 0);
+    measurement = String(*currentReadings.mhz.temp);
     lastUpdate = currentReadings.mhz.lastUpdate;
   } else if(var == "HUMIDITY") {
-    measurement = String(currentReadings.dht.rh.reading, 0);
+    measurement = String(*currentReadings.dht.rh.reading, 0);
     lastUpdate = currentReadings.dht.rh.lastUpdate;
   } else if(var == "CO2") {
-    measurement = String(currentReadings.mhz.co2, 0);
+    measurement = String(*currentReadings.mhz.co2);
     lastUpdate = currentReadings.mhz.lastUpdate;
   } else if(var == "UPTIME") {
     measurement = String(millis());
-    lastUpdate = 1;    
+    lastUpdate = 1;
   } else {
     return String();
   }
 
   unsigned long int age = lastUpdate > 0 ? millis() - lastUpdate : 0; // Return 0 if the field has never been updated
   return measurement + "," + String(age);
+}
+
+void InitTimeZone()
+{
+  struct timezone tz = {0, 0};
+  struct timeval tv = {0, 0};
+  settimeofday(&tv, &tz);  
+  setenv("TZ", "Etc/UTC", 0);
+  tzset();
 }
