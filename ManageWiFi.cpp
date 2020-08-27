@@ -1,3 +1,7 @@
+// The principal purpose of this file is to ensure that the HTTP server
+// used in access point negotiation doesn't clash with the one used to
+// present the device's own web page.
+
 #include "WiFiConnect.h"
 
 WiFiConnect wc;
