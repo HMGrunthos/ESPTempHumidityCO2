@@ -100,6 +100,9 @@ void setup()
   configTime(0, 0, "pool.ntp.org");
   InitTimeZone();
 
+  // initialize SPIFFS
+  SPIFFS.begin();
+
   // Start the services
   startServer();
 }
@@ -114,7 +117,7 @@ void loop()
   const int long INTERVAL = 10000;
 
   static uint8_t mostAvailMeas = 0;
-
+        
   unsigned long currentMillis = millis();
   if (currentMillis - previousMillis >= INTERVAL) {
     // Save the last time you updated the DHT values
@@ -202,6 +205,8 @@ void loop()
     // Update and rotate logs
     logger.process();
   }
+
+  yield();
 }
 
 void startServer()
@@ -215,24 +220,25 @@ void startServer()
       request->send_P(200, "text/html", index_html);
     });
     server->on("/tempDHT", HTTP_GET, [](AsyncWebServerRequest *request){
-      request->send_P(200, "text/plain", requestHandler("TEMPDHT").c_str());
+      request->send(200, "text/plain", requestHandler("TEMPDHT").c_str());
     });
     server->on("/tempMHZ", HTTP_GET, [](AsyncWebServerRequest *request){
-      request->send_P(200, "text/plain", requestHandler("TEMPMHZ").c_str());
+      request->send(200, "text/plain", requestHandler("TEMPMHZ").c_str());
     });
     server->on("/humidity", HTTP_GET, [](AsyncWebServerRequest *request){
-      request->send_P(200, "text/plain", requestHandler("HUMIDITY").c_str());
+      request->send(200, "text/plain", requestHandler("HUMIDITY").c_str());
     });
     server->on("/co2", HTTP_GET, [](AsyncWebServerRequest *request){
-      request->send_P(200, "text/plain", requestHandler("CO2").c_str());
+      request->send(200, "text/plain", requestHandler("CO2").c_str());
     });
     server->on("/uptime", HTTP_GET, [](AsyncWebServerRequest *request){
-      request->send_P(200, "text/plain", requestHandler("UPTIME").c_str());
+      request->send(200, "text/plain", requestHandler("UPTIME").c_str());
     });
     server->on("/calibrateCO2", HTTP_GET, [](AsyncWebServerRequest *request){
       mhzDoCalibrate = true;
-      request->send_P(200, "text/plain", "OK");
+      request->send(200, "text/plain", "OK");
     });
+    server->on("/csv", HTTP_GET, fetchCSVData);
 
     server->begin();
     // Serial.println("Web server started.");
@@ -282,9 +288,62 @@ String requestHandler(const String &var)
 
 void InitTimeZone()
 {
-  struct timezone tz = {0, 0};
   struct timeval tv = {0, 0};
-  settimeofday(&tv, &tz);  
+  struct timezone tz = {0, 0};
+  settimeofday(&tv, &tz);
   setenv("TZ", "Etc/UTC", 0);
   tzset();
+}
+
+void fetchCSVData(AsyncWebServerRequest *request)
+{
+  PGM_P csvHeader = PSTR("unixTime,dhtTemp,dhtRH,mhzTemp,mhzCO2\n");
+  SPIFFSLogData<EnvData> data[25];
+
+  time_t tNow = time(NULL);
+
+  if(loggerInitialised == false) {
+    request->send(200, "text/plain", csvHeader);
+    return;
+  }
+
+  // Run the query
+  /*size_t count = logger.readRowsBetween(
+                         (SPIFFSLogData<EnvData>*)&data, // output
+                         tNow - (60 * 60 * 24),          // time start (inclusive)
+                         tNow,                           // time end (inclusive)
+                         0,                              // start index within results
+                         128                             // max number of rows to fetch
+  );*/
+  size_t count = logger.readRows(data, time(nullptr), 0, 25);
+
+  Serial.print("Got csv query and fetched :");
+  Serial.print(count);
+  Serial.println(": lines ");
+
+  uint_fast32_t currentLine = 0;
+ 
+  AsyncWebServerResponse *response = request->beginChunkedResponse("text/plain", [csvHeader, count, data, currentLine](uint8_t *buffer, size_t maxLen, size_t index) mutable -> size_t {
+    PGM_P csvFormat = PSTR("%i,%f,%f,%i,%i\n");
+    Serial.println(count);
+    Serial.println(currentLine);
+    if(currentLine == 0) {
+      strncpy_P((char*)buffer, csvHeader, maxLen);
+      currentLine = 1;
+      Serial.println((char*)buffer);
+      return strlen_P(csvHeader);
+    } else {
+      if(currentLine <= count) {
+        int rVal = snprintf_P((char*)buffer, maxLen, csvFormat, data[currentLine-1].timestampUTC, data[currentLine-1].data.dht.temp, data[currentLine-1].data.dht.humidity, data[currentLine-1].data.mhz.temp, data[currentLine-1].data.mhz.co2);
+        currentLine++;
+        Serial.println((char*)buffer);
+        return rVal;
+      } else {
+        Serial.println("Out of data.");
+        return 0;
+      }
+    }
+  });
+  response->addHeader("Access-Control-Allow-Origin", "*");
+  request->send(response);
 }
