@@ -10,6 +10,8 @@
 
 #include "MHZ.h"
 #include "ManageWiFi.h"
+#include "miniz.h"
+
 #include "indexHTML.h"
 
 // Pin for uart reading
@@ -200,6 +202,7 @@ void loop()
     if(time(NULL) > 1500000000) {
       logger.init();
       loggerInitialised = true;
+      Serial.println("Logger initialised.");
     }
   } else {
     // Update and rotate logs
@@ -297,53 +300,47 @@ void InitTimeZone()
 
 void fetchCSVData(AsyncWebServerRequest *request)
 {
-  PGM_P csvHeader = PSTR("unixTime,dhtTemp,dhtRH,mhzTemp,mhzCO2\n");
-  SPIFFSLogData<EnvData> data[25];
-
   time_t tNow = time(NULL);
-
-  if(loggerInitialised == false) {
-    request->send(200, "text/plain", csvHeader);
-    return;
-  }
-
-  // Run the query
-  /*size_t count = logger.readRowsBetween(
-                         (SPIFFSLogData<EnvData>*)&data, // output
-                         tNow - (60 * 60 * 24),          // time start (inclusive)
-                         tNow,                           // time end (inclusive)
-                         0,                              // start index within results
-                         128                             // max number of rows to fetch
-  );*/
-  size_t count = logger.readRows(data, time(nullptr), 0, 25);
-
-  Serial.print("Got csv query and fetched :");
-  Serial.print(count);
-  Serial.println(": lines ");
-
   uint_fast32_t currentLine = 0;
- 
-  AsyncWebServerResponse *response = request->beginChunkedResponse("text/plain", [csvHeader, count, data, currentLine](uint8_t *buffer, size_t maxLen, size_t index) mutable -> size_t {
-    PGM_P csvFormat = PSTR("%i,%f,%f,%i,%i\n");
-    Serial.println(count);
-    Serial.println(currentLine);
+
+ Serial.print("Search start...");
+  AsyncWebServerResponse *response = request->beginChunkedResponse("text/plain", [tNow, currentLine](uint8_t *buffer, size_t maxLen, size_t index) mutable -> size_t {
+    uint_fast16_t nChars;
     if(currentLine == 0) {
+      PGM_P csvHeader = PSTR("unixTime,dhtTemp,dhtRH,mhzTemp,mhzCO2");
+
       strncpy_P((char*)buffer, csvHeader, maxLen);
-      currentLine = 1;
-      Serial.println((char*)buffer);
-      return strlen_P(csvHeader);
-    } else {
-      if(currentLine <= count) {
-        int rVal = snprintf_P((char*)buffer, maxLen, csvFormat, data[currentLine-1].timestampUTC, data[currentLine-1].data.dht.temp, data[currentLine-1].data.dht.humidity, data[currentLine-1].data.mhz.temp, data[currentLine-1].data.mhz.co2);
-        currentLine++;
-        Serial.println((char*)buffer);
-        return rVal;
-      } else {
-        Serial.println("Out of data.");
-        return 0;
+      currentLine++;
+      nChars = strlen((char*)buffer);
+    } else if(loggerInitialised == true) {
+      SPIFFSLogData<EnvData> data[16];
+      char *cBPtr = (char*)buffer;
+
+      // Run the query
+      size_t nLinesRead = logger.readRowsBetween(data,                      // output
+                                                 tNow - (60 * 60 * 36),     // time start (inclusive)
+                                                 tNow,                      // time end (inclusive)
+                                                 currentLine - 1,           // start index within results
+                                                 16);                       // max number of rows to fetch
+
+      nChars = 0;
+      for(size_t cLine = 0; cLine < nLinesRead; cLine++) {
+        char tBuff[32];
+        int rVal = snprintf_P(tBuff, sizeof(tBuff), PSTR("\n%li,%.1f,%.1f,%i,%i"), data[cLine].timestampUTC, data[cLine].data.dht.temp, data[cLine].data.dht.humidity, data[cLine].data.mhz.temp, data[cLine].data.mhz.co2);
+        if((nChars + rVal + 1) <= maxLen) {
+          strcpy(cBPtr, tBuff);
+          currentLine++;
+          cBPtr += rVal;
+          nChars += rVal;
+        } else {
+          break;
+        }
       }
     }
+    return nChars;
   });
   response->addHeader("Access-Control-Allow-Origin", "*");
+  response->addHeader("Content-Encoding", "gzip");
   request->send(response);
+  Serial.println("Done.");
 }
