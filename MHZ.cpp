@@ -125,7 +125,8 @@ int MHZ::readCO2UART() {
 
   int ppm_uart = 256 * (int)response[2] + response[3];
 
-  temperature = response[4] - 44;  // - 40;
+  //temperature = response[4] - 44;  // - 40;
+  temperature = response[4] - 40;  // - 44;
 
   byte status = response[5];
   if (debug) {

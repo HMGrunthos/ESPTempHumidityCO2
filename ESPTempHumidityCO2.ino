@@ -5,14 +5,16 @@
 
 // Import required libraries
 #include <ESPAsyncWebServer.h>
+#include <ESP8266mDNS.h>
 #include <SPIFFSLogger.h>
 #include <DHTesp.h>
 
 #include "MHZ.h"
 #include "ManageWiFi.h"
-#include "miniz.h"
 
 #include "indexHTML.h"
+
+#define HOSTNAME "EnvMonitor"
 
 // Pin for uart reading
 #define MH_Z14_RX D7
@@ -24,7 +26,7 @@ MHZ co2(MH_Z14_RX, MH_Z14_TX, MHZ14A);
 static volatile bool mhzDoCalibrate = false;
 
 // Digital pin connected to the DHT sensor
-#define DHTPIN 17
+#define DHTPIN D5
 // Uncomment the type of sensor in use:
 #define DHTTYPE DHT22
 
@@ -102,6 +104,14 @@ void setup()
   configTime(0, 0, "pool.ntp.org");
   InitTimeZone();
 
+  // Start and assign mDNS service and set hostname and services
+  if(MDNS.begin(HOSTNAME)) {
+    Serial.println("Started mDNS with hostname :" HOSTNAME ":");
+    MDNS.addService("http", "tcp", 80);
+  } else {
+    Serial.println("Failed to start mDNS.");
+  }
+
   // initialize SPIFFS
   SPIFFS.begin();
 
@@ -115,8 +125,8 @@ void loop()
   // The value will quickly become too large for an int to store
   static unsigned long previousMillis = 0;    // will store last time DHT was updated
 
-  // Updates readings every 10 seconds
-  const int long INTERVAL = 10000;
+  // Updates readings every 20 seconds
+  const int long INTERVAL = 20000;
 
   static uint8_t mostAvailMeas = 0;
         
@@ -135,6 +145,7 @@ void loop()
       *currentReadings.dht.temp.reading = newDHTTemp;
       currentReadings.dht.temp.lastUpdate = currentMillis;
       currentReadings.updateState |= DHTTEMP;
+      Serial.print("DHT Temp: ");
       Serial.println(*currentReadings.dht.temp.reading);
     }
 
@@ -147,6 +158,7 @@ void loop()
       *currentReadings.dht.rh.reading = newDHTRH;
       currentReadings.dht.rh.lastUpdate = currentMillis;
       currentReadings.updateState |= DHTRH;
+      Serial.print("DHT RH: ");
       Serial.println(*currentReadings.dht.rh.reading);
     }
 
@@ -167,8 +179,11 @@ void loop()
           currentReadings.mhz.lastUpdate = currentMillis;
           currentReadings.updateState |= MHZTEMP;
           currentReadings.updateState |= MHZCO2;
-          Serial.println(*currentReadings.mhz.co2);
+          Serial.print("MHZ TEMP: ");
           Serial.println(*currentReadings.mhz.temp);
+          Serial.print("MHZ CO2: ");
+          Serial.println(*currentReadings.mhz.co2);
+
         } else {
           Serial.println("Failed to read from MH-Z14A sensor!");
         }
@@ -208,6 +223,9 @@ void loop()
     // Update and rotate logs
     logger.process();
   }
+
+  // Update mDNS service
+  MDNS.update();
 
   yield();
 }
@@ -305,7 +323,7 @@ void fetchCSVData(AsyncWebServerRequest *request)
 
  Serial.print("Search start...");
   AsyncWebServerResponse *response = request->beginChunkedResponse("text/plain", [tNow, currentLine](uint8_t *buffer, size_t maxLen, size_t index) mutable -> size_t {
-    uint_fast16_t nChars;
+    uint_fast16_t nChars = 0;
     if(currentLine == 0) {
       PGM_P csvHeader = PSTR("unixTime,dhtTemp,dhtRH,mhzTemp,mhzCO2");
 
@@ -313,17 +331,16 @@ void fetchCSVData(AsyncWebServerRequest *request)
       currentLine++;
       nChars = strlen((char*)buffer);
     } else if(loggerInitialised == true) {
-      SPIFFSLogData<EnvData> data[16];
+      SPIFFSLogData<EnvData> data[32];
       char *cBPtr = (char*)buffer;
 
       // Run the query
-      size_t nLinesRead = logger.readRowsBetween(data,                      // output
-                                                 tNow - (60 * 60 * 36),     // time start (inclusive)
-                                                 tNow,                      // time end (inclusive)
-                                                 currentLine - 1,           // start index within results
-                                                 16);                       // max number of rows to fetch
+      size_t nLinesRead = logger.readRowsBetween(data,                                          // output
+                                                 tNow - (60 * 60 * 36),                         // time start (inclusive)
+                                                 tNow,                                          // time end (inclusive)
+                                                 currentLine - 1,                               // start index within results
+                                                 sizeof(data)/sizeof(SPIFFSLogData<EnvData>));  // max number of rows to fetch
 
-      nChars = 0;
       for(size_t cLine = 0; cLine < nLinesRead; cLine++) {
         char tBuff[32];
         int rVal = snprintf_P(tBuff, sizeof(tBuff), PSTR("\n%li,%.1f,%.1f,%i,%i"), data[cLine].timestampUTC, data[cLine].data.dht.temp, data[cLine].data.dht.humidity, data[cLine].data.mhz.temp, data[cLine].data.mhz.co2);
@@ -340,7 +357,6 @@ void fetchCSVData(AsyncWebServerRequest *request)
     return nChars;
   });
   response->addHeader("Access-Control-Allow-Origin", "*");
-  response->addHeader("Content-Encoding", "gzip");
   request->send(response);
   Serial.println("Done.");
 }
