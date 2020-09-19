@@ -23,7 +23,7 @@
 // MHZ Interface object
 MHZ co2(MH_Z14_RX, MH_Z14_TX, MHZ14A);
 
-static volatile bool mhzDoCalibrate = false;
+static volatile enum {DoNothing, DoCalibrate, DoABCOff, DoABCOn} mhzCmd = DoNothing;
 
 // Digital pin connected to the DHT sensor
 #define DHTPIN D5
@@ -164,10 +164,29 @@ void loop()
 
     // Update or calibrate co2 sensor
     if(co2.isReady()) {
-      if(mhzDoCalibrate == true) {
-        mhzDoCalibrate = false;
-        if(co2.calibrate()) {
-          Serial.println("Failed to calibrate MH-Z14A sensor!");
+      if(mhzCmd != DoNothing) {
+        switch(mhzCmd) {
+          case DoCalibrate:
+            if(co2.calibrate()) {
+              Serial.println("Failed to calibrate MH-Z14A sensor!");
+            }
+            mhzCmd = DoNothing;
+            break;
+          case DoABCOff:
+            if(co2.abcOff()) {
+              Serial.println("Failed to turn ABC off.");
+            }
+            mhzCmd = DoNothing;
+            break;
+          case DoABCOn:
+            if(co2.abcOn()) {
+              Serial.println("Failed to turn ABC on.");
+            }
+            mhzCmd = DoNothing;
+            break;
+          default:
+            mhzCmd = DoNothing;
+            break;
         }
       } else {
         // Read CO2
@@ -256,9 +275,18 @@ void startServer()
       request->send(200, "text/plain", requestHandler("UPTIME").c_str());
     });
     server->on("/calibrateCO2", HTTP_GET, [](AsyncWebServerRequest *request){
-      mhzDoCalibrate = true;
+      mhzCmd = DoCalibrate;
       request->send(200, "text/plain", "OK");
     });
+    server->on("/disableCO2ABC", HTTP_GET, [](AsyncWebServerRequest *request){
+      mhzCmd = DoABCOff;
+      request->send(200, "text/plain", "OK");
+    });
+    server->on("/enableCO2ABC", HTTP_GET, [](AsyncWebServerRequest *request){
+      mhzCmd = DoABCOn;
+      request->send(200, "text/plain", "OK");
+    });
+    
     server->on("/csv", HTTP_GET, fetchCSVData);
 
     server->begin();

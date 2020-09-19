@@ -112,6 +112,26 @@ int MHZ::calibrate() {
   return rVal;
 }
 
+int MHZ::abcOff() {
+  if (debug) Serial.println(F("-- Turning off ABC ---"));
+  byte cmd[9] = {0xFF, 0x01, 0x79, 0x00, 0x00, 0x00, 0x00, 0x00, 0x86};
+  byte response[9];  // for answer
+
+  int rVal = sendCommand(cmd, sizeof(cmd), response);
+
+  return rVal;
+}
+
+int MHZ::abcOn() {
+  if (debug) Serial.println(F("-- Turning on ABC ---"));
+  byte cmd[9] = {0xFF, 0x01, 0x79, 0xA0, 0x00, 0x00, 0x00, 0x00, 0xE6};
+  byte response[9];  // for answer
+
+  int rVal = sendCommand(cmd, sizeof(cmd), response);
+
+  return rVal;
+}
+
 int MHZ::readCO2UART() {
   if (debug) Serial.println(F("-- read CO2 uart ---"));
   byte cmd[9] = {0xFF, 0x01, 0x86, 0x00, 0x00, 0x00, 0x00, 0x00, 0x79};

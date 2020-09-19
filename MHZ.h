@@ -37,6 +37,8 @@ class MHZ {
   boolean isReady();
 
   int calibrate();
+  int abcOff();
+  int abcOn();
   int readCO2UART();
   int readCO2PWM();
   int getLastTemperature();
