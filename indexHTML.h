@@ -4,7 +4,7 @@ const char index_html[] PROGMEM = R"rawliteral(
 <head>
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <link rel="stylesheet" href="https://use.fontawesome.com/releases/v5.7.2/css/all.css" integrity="sha384-fnmOCqbTlWIlj8LyTjo7mOUStjsKC4pOpQbqyi7RrhN7udi9RwhKkMHpvLbHG9Sr" crossorigin="anonymous">
-  <script src="https://d3js.org/d3.v6.min.js"></script>
+  <script src="https://d3js.org/d3.v5.min.js"></script>
   <style>
     html {
      font-family: Arial;
@@ -106,10 +106,20 @@ const char index_html[] PROGMEM = R"rawliteral(
               "translate(" + margin.left + "," + margin.top + ")");
     
     //Read the data
-    d3.csv("https://raw.githubusercontent.com/holtzy/D3-graph-gallery/master/DATA/iris.csv", function(data) {
+    d3.csv("http://192.168.2.179/csv", function(d) {
+      return {
+        dateTime: new Date(+d.unixTime * 1000),
+        dhtTemp: +d.dhtTemp,
+        dhtRH: +d.dhtRH,
+        mhzTemp: +d.mhzTemp,
+        mhzCO2: +d.mhzCO2
+      };
+    }).then(function(data) {
+		var dataExtent = d3.extent(data, function(d) {return d.dateTime;});
+
       // Add X axis
-      var x = d3.scaleLinear()
-        .domain([4, 8])
+      var x = d3.scaleTime()
+        .domain(dataExtent)
         .range([ 0, width ]);
       var xAxis = Svg.append("g")
         .attr("transform", "translate(0," + height + ")")
@@ -117,77 +127,95 @@ const char index_html[] PROGMEM = R"rawliteral(
     
       // Add Y axis
       var y = d3.scaleLinear()
-        .domain([0, 70])
+        .domain([0, 2000])
         .range([ height, 0]);
       Svg.append("g")
         .call(d3.axisLeft(y));
-    
+      
       // Add a clipPath: everything out of this area won't be drawn.
       var clip = Svg.append("defs").append("svg:clipPath")
-          .attr("id", "clip")
-          .append("svg:rect")
-          .attr("width", width )
-          .attr("height", height )
-          .attr("x", 0)
-          .attr("y", 0);
-    
+        .attr("id", "clip")
+        .append("svg:rect")
+        .attr("width", width )
+        .attr("height", height )
+        .attr("x", 0)
+        .attr("y", 0);
+      
       // Color scale: give me a specie name, I return a color
       var color = d3.scaleOrdinal()
         .domain(["setosa", "versicolor", "virginica" ])
         .range([ "#440154ff", "#21908dff", "#fde725ff"])
-    
+      
       // Add brushing
       var brush = d3.brushX()                 // Add the brush feature using the d3.brush function
-          .extent( [ [0,0], [width,height] ] ) // initialise the brush area: start at 0,0 and finishes at width,height: it means I select the whole graph area
-          .on("end", updateChart) // Each time the brush selection changes, trigger the 'updateChart' function
-    
+        .extent( [ [0,0], [width,height] ] ) // initialise the brush area: start at 0,0 and finishes at width,height: it means I select the whole graph area
+        .on("end", updateChart) // Each time the brush selection changes, trigger the 'updateChart' function
+      
       // Create the scatter variable: where both the circles and the brush take place
       var scatter = Svg.append('g')
         .attr("clip-path", "url(#clip)")
-
-		scatter
-		  .append("path")
-        .datum(data)
-        .attr("fill", "none")
-        .attr("stroke", "#69b3a2")
-        .attr("stroke-width", 1.5)
-        .attr("d", d3.line()
-          .x(function(d) { return x(d.Sepal_Length) })
-          .y(function(d) { return y(d.Petal_Length) })
-        )
-
-      // Add the points
-      scatter
-        .selectAll("dot")
-        .data(data)
-        .enter()
-        .append("circle")
-          .attr("cx", function(d) { return x(d.Sepal_Length) } )
-          .attr("cy", function(d) { return y(d.Petal_Length) } )
+  
+  		scatter
+  		  .append("path")
+          .datum(data)
+          .attr("fill", "none")
+          .attr("stroke", "#69b3a2")
+          .attr("stroke-width", 1.5)
+          .attr("d", d3.line()
+            .x(function(d) { return x(d.dateTime) })
+            .y(function(d) { return y(d.mhzCO2) })
+          )
+  
+        // Add the points
+        scatter
+          .selectAll("dot")
+          .data(data)
+          .enter()
+          .append("circle")
+          .attr("cx", function(d) { return x(d.dateTime) } )
+          .attr("cy", function(d) { return y(d.mhzCO2) } )
           .attr("r", 2)
           .attr("fill", "#000000")
-    
-      // Add the brushing
-      scatter
-        .append("g")
+ 
+        // Add the brushing
+        scatter
+          .append("g")
           .attr("class", "brush")
           .call(brush);
-    
-      // A function that set idleTimeOut to null
-      var idleTimeout
-      function idled() { idleTimeout = null; }
-    
-      // A function that update the chart for given boundaries
-      function updateChart() {
-        extent = d3.event.selection
-    
-        // If no selection, back to initial coordinate. Otherwise, update X axis domain
-        if(!extent){
-          if (!idleTimeout) return idleTimeout = setTimeout(idled, 350); // This allows to wait a little bit
-          x.domain([ 4,8])
-        }else{
-          x.domain([ x.invert(extent[0]), x.invert(extent[1]) ])
-          scatter.select(".brush").call(brush.move, null) // This remove the grey brush area as soon as the selection has been done
+      
+        // A function that set idleTimeOut to null
+        var idleTimeout
+        function idled() { idleTimeout = null; }
+      
+        // A function that update the chart for given boundaries
+        function updateChart() {
+          extent = d3.event.selection
+      
+          // If no selection, back to initial coordinate. Otherwise, update X axis domain
+          if(!extent){
+            if (!idleTimeout) return idleTimeout = setTimeout(idled, 350); // This allows to wait a little bit
+          	x.domain(dataExtent)
+            // x.domain([ 4,8])
+          } else {
+            x.domain([ x.invert(extent[0]), x.invert(extent[1]) ])
+            scatter.select(".brush").call(brush.move, null) // This remove the grey brush area as soon as the selection has been done
+          }
+      
+          // Update axis and circle position
+          xAxis.transition().duration(1000).call(d3.axisBottom(x))
+          scatter
+            .select("path")
+            .transition().duration(1000)
+  			   .attr("d", d3.line()
+              .x(function(d) { return x(d.dateTime) })
+              .y(function(d) { return y(d.mhzCO2) })
+            )
+  
+          scatter
+            .selectAll("circle")
+            .transition().duration(1000)
+            .attr("cx", function (d) { return x(d.dateTime); } )
+            .attr("cy", function (d) { return y(d.mhzCO2); } )
         }
     
         // Update axis and circle position
